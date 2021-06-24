@@ -27,6 +27,7 @@ def adjust(df, key, feature):
 		std7 = df[df['pt_d'] < 8][feature].std()
 		mean8 = df[(df['pt_d'] >= 8) & (df['coldu'] == 1)][feature].mean()
 		std8 = df[(df['pt_d'] >= 8) & (df['coldu'] == 1)][feature].std()
+	        #利用样本均值和修正样本标准差来拟合概率分布特性，将第8天冷启动的特征分布归一化到前7天上去
 		df.loc[(df['pt_d'] >= 8) & (df['coldu'] == 1), feature]= ((df[(df['pt_d'] >= 8) & (df['coldu'] == 1)][feature] - mean8) / std8 * std7 + mean7)
 	return df
 
@@ -48,19 +49,21 @@ def adjust(df, key, feature):
 # 		df.loc[(df['pt_d'] == 10) & (df['coldu'] == 1) & (df['coldt'] == 0), feature]= ((df[(df['pt_d'] == 10) & (df['coldu'] == 1) & (df['coldt'] == 0)][feature] - mean8) / std8 * std7 + mean7)
 # 	return df
 
-def adjust_single(df, key, feature):
-	if key == 'uid':
-		mean7 = df[df['pt_d'] < 8].drop_duplicates(['uid'])[feature].mean()
-		std7 = df[df['pt_d'] < 8].drop_duplicates(['uid'])[feature].std()
+def adjust_single(df, key, feature): #在统计特征里，key是原始特征列名，feature是特征列名_count
+	if key == 'uid':#         对前7天的uid去重
+		mean7 = df[df['pt_d'] < 8].drop_duplicates(['uid'])[feature].mean() #求平均
+		std7 = df[df['pt_d'] < 8].drop_duplicates(['uid'])[feature].std() #求标准差
+	        #                      第8天，冷启动用户
 		mean8 = df[(df['pt_d'] >= 8) & (df['coldu'] == 1)].drop_duplicates(['uid'])[feature].mean()
 		std8 = df[(df['pt_d'] >= 8) & (df['coldu'] == 1)].drop_duplicates(['uid'])[feature].std()
+	        # 利用样本均值和修正样本标准差来拟合概率分布特性，将第8天冷启动的特征分布归一化到前7天上去
 		df.loc[(df['pt_d'] == 10) & (df['coldu'] == 1) & (df['coldt'] == 0), feature]= ((df[(df['pt_d'] == 10) & (df['coldu'] == 1) & (df['coldt'] == 0)][feature] - mean8) / std8 * std7 + mean7 * 1.1)
 		df.loc[(df['pt_d'] == 10) & (df['coldu'] == 1) & (df['coldt'] == 1), feature]= ((df[(df['pt_d'] == 10) & (df['coldu'] == 1) & (df['coldt'] == 1)][feature] - mean8) / std8 * std7 * 0.8 + mean7 * 0.8)
 	return df
 
-def group_fea(df,key,target):
+def group_fea(df,key,target): #对用户来说，key是uid，target是各个广告相关特征
 	tmp = df.groupby(key, as_index=False)[target].agg({
-		key + '_' + target + '_nunique': 'nunique',
+		key + '_' + target + '_nunique': 'nunique', #统计唯一值个数。这里把target列名也改成了后一种
 	}).reset_index().drop('index', axis=1)
 	return tmp
 
@@ -121,10 +124,10 @@ def emb2(df, f1, f2):
 		tmp2['{}_{}_emb_{}'.format(f2, f1, i)] = emb_matrix2[:, i]
 	return tmp, tmp2
 
-def emb_adjust(df, f1, f2):
+def emb_adjust(df, f1, f2): #df已经根据pt_d排序，f1是uid f2是adv_id
 	emb_size = 8
 	df = df.fillna(0)
-	tmp = df.groupby(f1, as_index=False)[f2].agg({'{}_{}_list'.format(f1, f2): list})
+	tmp = df.groupby(f1, as_index=False)[f2].agg({'{}_{}_list'.format(f1, f2): list}) #竟然还可以是list？
 	sentences = tmp['{}_{}_list'.format(f1, f2)].values.tolist()
 	for i in range(len(sentences)):
 		sentences[i] = [str(x) for x in sentences[i]]
@@ -281,13 +284,13 @@ def make_feature(df):
 					'spread_app_id', 'tags', 'app_first_class', 'app_second_class', 'city', 'city_rank', 'device_name',
 					'device_size', 'career', 'gender', 'net_type', 'residence', 'app_score', 'emui_dev','consume_purchase', 'indu_name']
 	for f in tqdm(cate_cols):
-		tmp = df[f].map(df[f].value_counts())
-		if tmp.var() > 1:
+		tmp = df[f].map(df[f].value_counts()) #直接替换成各自值的统计个数
+		if tmp.var() > 1: #方差 实际值-平均值 ^ 2 再除以值个数
 			df[f + '_count'] = tmp
-			df = adjust_single(df, f, f + '_count')
+			df = adjust_single(df, f, f + '_count') #只处理uid #修正冷启动特征分布
 
 #     # nunique特征
-	print('开始构造nunique特征')
+	print('开始构造nunique特征') #唯一值特征 ？
 	nunique_group = []
 
 	print('用户')
@@ -296,16 +299,16 @@ def make_feature(df):
 	for target in tqdm(feature_target):
 		if key + '_' + target + '_nunique' not in nunique_group:
 			nunique_group.append(key + '_' + target + '_nunique')
-			tmp = group_fea(df,key,target)
+			tmp = group_fea(df,key,target) #每个uid 对应其他特征，统计唯一值的个数
 			df = df.merge(tmp,on=key,how='left')
-			df = adjust_single(df, key, key + '_' + target + '_nunique')
+			df = adjust_single(df, key, key + '_' + target + '_nunique') #修正冷启动user的特征分布
 		if target + '_' + key + '_nunique' not in nunique_group:
 			nunique_group.append(target + '_' + key + '_nunique')
-			tmp = group_fea(df,target,key)
+			tmp = group_fea(df,target,key) #这个牛啊 双向特征
 			df = df.merge(tmp,on=target,how='left')
 
 	print('广告')
-	key = 'adv_id'
+	key = 'adv_id' #广告语用户侧+媒体测特征 统计。没有冷启动问题
 	feature_target = ['uid', 'age', 'city', 'device_name', 'device_size', 'career', 'residence', 'gender', 'adv_prim_id', 'slot_id', 'spread_app_id']
 	for target in tqdm(feature_target):
 		if key + '_' + target + '_nunique' not in nunique_group:
@@ -319,16 +322,16 @@ def make_feature(df):
 
 	print('清除')
 	for feature in tqdm(nunique_group):
-		if df[feature].var()<1:
+		if df[feature].var()<1: #方差小于1列清楚
 			df = df.drop(feature, axis=1)
 
-	df = reduce(df)
+	df = reduce(df) #压缩
 
 	# embedding特征
 	print('开始构造emb特征')
 	emb_cols = [['uid', 'adv_id']]
-	sort_df = df.sort_values('pt_d').reset_index(drop=True)
-	for f1, f2 in emb_cols:
+	sort_df = df.sort_values('pt_d').reset_index(drop=True) #升序排列
+	for f1, f2 in emb_cols: # f1:uid f2:adv_id
 		tmp, tmp2 = emb_adjust(sort_df, f1, f2)
 		df = df.merge(tmp, on=f1, how='left').merge(tmp2, on=f2, how='left').fillna(0)
 
@@ -366,13 +369,14 @@ def make_feature(df):
 
 	return df
 
-
+#i 0~3 xx_idx df0里train和val的下标 df0：train里面label全为0的样本 df1：全为1的样本 test_df_raw：是testAB全合并
 def atom_makefea(i,trn_idx, val_idx, df0, df1,test_df_raw, fold):
 	print('fold:{}'.format(i + 1))
+	#                 通过行号取行数据                        上下合并
 	df = pd.concat([df0.iloc[val_idx].reset_index(drop=True),df1], axis=0).reset_index(drop=True)
 
 	df = pd.concat([df,test_df_raw], axis=0).reset_index(drop=True)
-
+                         #包含了df0 df1 和testAB的数据
 	df = make_feature(df)
 
 	df.to_pickle('./data/feature/fea_'+str(fold)+'_'+str(i+1)+'.pkl')
@@ -433,7 +437,7 @@ def atom_prediction(i, fold, epoch=550):
 	print('save fold:{}'.format(i + 1))
 	return
 
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed #分布式计算模块
 if __name__ == "__main__":
 
 #     logging.basicConfig(format='%(asctime)s:%(levelname)s:%(message)s', level=logging.INFO)
@@ -449,11 +453,11 @@ if __name__ == "__main__":
 	# test_df_A['testb'] = 0
 	# test_df_B['testb'] = 1
 	train_uid = set(df_raw['uid'])
-	test_df_A['coldu'] = test_df_A['uid'].apply(lambda x: 1 if x not in train_uid else 0)
+	test_df_A['coldu'] = test_df_A['uid'].apply(lambda x: 1 if x not in train_uid else 0) #冷启动用户
 	test_df_B['coldu'] = test_df_B['uid'].apply(lambda x: 1 if x not in train_uid else 0)
-	train_uid = set(list(set(df_raw['uid'])) + list(set(test_df_A['uid'])))
-	test_df_B['coldt'] = test_df_B['uid'].apply(lambda x: 1 if x not in train_uid else 0)
-	test_df_raw = pd.concat([test_df_A,test_df_B], axis=0).reset_index(drop=True)
+	train_uid = set(list(set(df_raw['uid'])) + list(set(test_df_A['uid']))) #train里的uid和A的uid取交集
+	test_df_B['coldt'] = test_df_B['uid'].apply(lambda x: 1 if x not in train_uid else 0) #冷启动用户，拿第二遍
+	test_df_raw = pd.concat([test_df_A,test_df_B], axis=0).reset_index(drop=True) #上下合并
 	# train_uid = set(df_raw['uid'])
 	# test_df_raw['coldu'] = test_df_raw['uid'].apply(lambda x: 1 if x not in train_uid else 0)
 	del df_raw
@@ -461,10 +465,10 @@ if __name__ == "__main__":
 	epoch = 550
 	fold = 4
 	preds = 0
-	print('开始{}折制作特征'.format(fold))
-	skf = StratifiedKFold(n_splits=fold, shuffle=True, random_state=1)
+	print('开始{}折制作特征'.format(fold)) 
+	skf = StratifiedKFold(n_splits=fold, shuffle=True, random_state=1) #验证集不同类别比例相同，所以要传入类别。返回的4组数据分别是train和test的index        pt_d行为发生时间(0~8)
 	Parallel(n_jobs=fold)(delayed(atom_makefea)(i,trn_idx, val_idx, df0, df1,test_df_raw, fold) for i, (trn_idx, val_idx) in enumerate(skf.split(df0, df0['pt_d'])))
-
+        #n_jobs表示CPU核数。delayed就是个装饰器，接受一个函数及其参数，包装成一个对象。
 	print('开始{}折训练'.format(fold))
 	# Parallel(n_jobs=2)(delayed(atom_prediction)(i, fold, epoch) for i in range(fold))
 	for i in range(fold):
