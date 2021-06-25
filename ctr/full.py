@@ -128,9 +128,12 @@ def emb_adjust(df, f1, f2): #df已经根据pt_d排序，f1是uid f2是adv_id
 	emb_size = 8
 	df = df.fillna(0)
 	tmp = df.groupby(f1, as_index=False)[f2].agg({'{}_{}_list'.format(f1, f2): list}) #竟然还可以是list？
-	sentences = tmp['{}_{}_list'.format(f1, f2)].values.tolist()
+#格式类似如下：
+# 	userid                                     user_feed_list
+#0           8  [71474, 73916, 50282, 11391, 27349, 30287, 115...
+	sentences = tmp['{}_{}_list'.format(f1, f2)].values.tolist() #[[1,87,...][][][]] 还是数字，不是str
 	for i in range(len(sentences)):
-		sentences[i] = [str(x) for x in sentences[i]]
+		sentences[i] = [str(x) for x in sentences[i]] #变成类似于list里面有对应每个样本的词[['1','87',...][][][]]
 	model = Word2Vec(sentences, size=emb_size, window=6, min_count=5, sg=0, hs=0, seed=1, iter=5)
 
 	index_dict = {}
@@ -139,58 +142,58 @@ def emb_adjust(df, f1, f2): #df已经根据pt_d排序，f1是uid f2是adv_id
 		seq = sentences[i]
 		vec = []
 		for w in seq:
-			if w in model.wv.vocab:
-				vec.append(model.wv[w])
+			if w in model.wv.vocab: #这个应该一定存在把？不一定，出现次数少于5就没有
+				vec.append(model.wv[w]) #表示这个词的特征映射结果
 		if len(vec) > 0:
-			emb_matrix.append(np.mean(vec, axis=0))
+			emb_matrix.append(np.mean(vec, axis=0)) #求每列均值。[[1, 2], [3, 4]] -> [ 2.,  3.]。每行8各元素，最后得到每列的均值
 		else:
-			emb_matrix.append([0] * emb_size)
-		index_dict[tmp[f1][i]] = i
-	emb_matrix = np.array(emb_matrix)
-	for i in range(emb_size):
-		tmp['{}_of_{}_emb_{}'.format(f1, f2, i)] = emb_matrix[:, i]
+			emb_matrix.append([0] * emb_size) #没有特征映射则为0
+		index_dict[tmp[f1][i]] = i  #f1是uid，i表示第i行 tmp[f1][i]表示的是第i行的uid
+	emb_matrix = np.array(emb_matrix) #转格式
+	for i in range(emb_size): #8
+		tmp['{}_of_{}_emb_{}'.format(f1, f2, i)] = emb_matrix[:, i] #第0维取全部，第1维取第i个元素。每个advid作为词向量，用向量平均来代表每个uid。
 
-	tmp_f2 = df.groupby(f2, as_index=False)[f1].agg({'{}_{}_list'.format(f2, f1): list})
-	sentences_f2 = tmp_f2['{}_{}_list'.format(f2, f1)].values.tolist()
+	tmp_f2 = df.groupby(f2, as_index=False)[f1].agg({'{}_{}_list'.format(f2, f1): list}) #只是为下面adjust服务的。
+	sentences_f2 = tmp_f2['{}_{}_list'.format(f2, f1)].values.tolist() #这里没有做w2v ？
 	index_dict_f2 = {}
 	emb_matrix_f2 = []
 	for i in tqdm(range(len(sentences_f2))):
-		seq = sentences_f2[i]
+		seq = sentences_f2[i] #存的是每个advid对应的uid
 		vec = []
 		for w in seq:
-			vec.append(emb_matrix[index_dict[w]])
+			vec.append(emb_matrix[index_dict[w]]) #index_dict[w]是uid的行号，emb_matrix[index_dict[w]]得到这个uid的8位向量
 		if len(vec) > 0:
 			emb_matrix_f2.append(np.mean(vec, axis=0))
 		else:
 			emb_matrix_f2.append([0] * emb_size)
-		index_dict_f2[str(tmp_f2[f2][i])] = i
-	emb_matrix_f2 = np.array(emb_matrix_f2)
+		index_dict_f2[str(tmp_f2[f2][i])] = i #f2是advid，i表示第行 tmp[f2][i]表示的是第i行的adv_id
+	emb_matrix_f2 = np.array(emb_matrix_f2) #这一步是用uid的向量来反求advid的向量。（w2v真正只对advid有词向量）
 
-	emb_matrix_adjust = []
-	for seq in tqdm(sentences):
+	emb_matrix_adjust = [] #这个和上一步有啥区别 ？
+	for seq in tqdm(sentences): #针对f1-f2-list.seq里面放的是某个f1下面所有f2组成的list
 		vec = []
 		for w in seq:
-			vec.append(emb_matrix_f2[index_dict_f2[w]])
+			vec.append(emb_matrix_f2[index_dict_f2[w]]) #index_dict_f2[w]得到每个adv_id的在tmp_f2的行号.emb_matrix_f2是这个advid的8位emb
 		if len(vec) > 0:
-			emb_matrix_adjust.append(np.mean(vec, axis=0))
+			emb_matrix_adjust.append(np.mean(vec, axis=0)) #有平均了一次。总的过程是advid向量-平均> uid向量-平均>advid向量- 平均adjust>uid向量
 		else:
 			emb_matrix_adjust.append([0] * emb_size)
 	emb_matrix_adjust = np.array(emb_matrix_adjust)
 	for i in range(emb_size):
-		tmp['{}_of_{}_emb_adjust_{}'.format(f1, f2, i)] = emb_matrix_adjust[:, i]
+		tmp['{}_of_{}_emb_adjust_{}'.format(f1, f2, i)] = emb_matrix_adjust[:, i] #与154行没有adjust的区别
 
 	tmp = tmp.drop('{}_{}_list'.format(f1, f2), axis=1)
 	
 	word_list = []
 	emb_matrix2 = []
-	for w in tqdm(model.wv.vocab):
+	for w in tqdm(model.wv.vocab): #这里的词典是所有advid
 		word_list.append(w)
 		emb_matrix2.append(model.wv[w])
 	emb_matrix2 = np.array(emb_matrix2)
 	tmp2 = pd.DataFrame()
-	tmp2[f2] = np.array(word_list).astype('int')
-	for i in range(emb_size):
-		tmp2['{}_emb_{}'.format(f2, i)] = emb_matrix2[:, i]
+	tmp2[f2] = np.array(word_list).astype('int') #所有advid
+	for i in range(emb_size): #8
+		tmp2['{}_emb_{}'.format(f2, i)] = emb_matrix2[:, i]#f2几乎所有词的emb。分成8列返回
 	
 	return tmp, tmp2
 
@@ -332,12 +335,12 @@ def make_feature(df):
 	emb_cols = [['uid', 'adv_id']]
 	sort_df = df.sort_values('pt_d').reset_index(drop=True) #升序排列
 	for f1, f2 in emb_cols: # f1:uid f2:adv_id
-		tmp, tmp2 = emb_adjust(sort_df, f1, f2)
-		df = df.merge(tmp, on=f1, how='left').merge(tmp2, on=f2, how='left').fillna(0)
+		tmp, tmp2 = emb_adjust(sort_df, f1, f2) #返回的是用advid给uid表示的向量，tmp2是每个advid的向量
+		df = df.merge(tmp, on=f1, how='left').merge(tmp2, on=f2, how='left').fillna(0) #把每个uid和advid的向量都拼在每条数据后面
 
 	# ctr特征
 	print('开始构造ctr特征')
-	mean_rate = df[df['pt_d'] < 8]['label'].mean()
+	mean_rate = df[df['pt_d'] < 8]['label'].mean() #前7天label均值。所有值的平均值
 	feature_list = cate_cols
 	for feat_1 in tqdm(feature_list):
 		res = pd.DataFrame()
@@ -349,21 +352,22 @@ def make_feature(df):
 			else:
 				count = df[df['pt_d'] < period].groupby(feat_1, as_index=False)['label'].agg({feat_1 + '_rate': 'mean'})
 			count['pt_d'] = period
-			res = res.append(count, ignore_index=True)
-		df = pd.merge(df, res, how='left', on=[feat_1, 'pt_d'], sort=False)
-		df[feat_1 + '_rate'] = reduce_s(df[feat_1 + '_rate'].fillna(mean_rate))
+			res = res.append(count, ignore_index=True)#同一个特征，不同天数，上下拼接
+		df = pd.merge(df, res, how='left', on=[feat_1, 'pt_d'], sort=False) #feat_1 + '_rate' 拼到后面去了。
+		df[feat_1 + '_rate'] = reduce_s(df[feat_1 + '_rate'].fillna(mean_rate)) #压缩并且把NaN的值变成均值
 		print(feat_1, ' over')
 
+		
 	# df_trans = df[df['pt_d']==7].copy().sample(frac=0.3, random_state=1)
 	# df_trans['uid_rate'] = mean_rate
 	# df = pd.concat([df,df_trans], axis=0).reset_index(drop=True)
 
-	df = df.reset_index()
-	df_trans = df[df['pt_d']==7][['index']].sample(frac=0.3, random_state=1)
-	df_trans['trans'] = 1
-	df = df.merge(df_trans,on='index',how='left')
-	df.loc[df['trans'] == 1, 'uid_rate'] = df[df['pt_d'] < 7]['label'].mean()
-	df = df.drop('index', axis=1).drop('trans', axis=1)
+	df = df.reset_index() #加一个index列
+	df_trans = df[df['pt_d']==7][['index']].sample(frac=0.3, random_state=1) #抽取0.3比例的index出来
+	df_trans['trans'] = 1 #加trans列
+	df = df.merge(df_trans,on='index',how='left') #把上面抽到的index对应的行，拼接一个trans列并且值为1
+	df.loc[df['trans'] == 1, 'uid_rate'] = df[df['pt_d'] < 7]['label'].mean() #把trans=1的行取出来，对应的rate设置为前7天的平均值
+	df = df.drop('index', axis=1).drop('trans', axis=1) #删掉这两列
 
 	df = reduce(df)
 
@@ -420,7 +424,7 @@ def atom_prediction(i, fold, epoch=550):
 	drop_fea = ['index', 'id', 'pt_d', 'coldu', 'label', 'communication_onlinerate', 'testb', 'coldt']
 	feature = [x for x in X_train.columns if x not in drop_fea]
 	print(feature)
-	weight = X_train['pt_d'] / X_train['pt_d'].max()
+	weight = X_train['pt_d'] / X_train['pt_d'].max() #越靠近日期权重越大
 	lgb_train = lgb.Dataset(X_train[feature], y_train, weight = weight)
 
 	gbm = lgb.train(params, lgb_train, num_boost_round=epoch,  valid_sets=(lgb_train), verbose_eval = 50)
